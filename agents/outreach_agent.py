@@ -1,0 +1,107 @@
+"""
+Agent 4: Outreach-Drafting Agent
+
+Job: draft a specific, non-generic outreach message per matched
+connection, using their relationship-strength reasoning to set tone.
+
+Zero-subscription design: if ANTHROPIC_API_KEY is set, this calls the
+Claude API for a genuinely tailored draft. If it isn't set (e.g. the TA
+grading this has no key), it falls back to a rule-based template so the
+whole pipeline still runs end-to-end and produces real output.
+"""
+import os
+from typing import List
+
+from common import ScoredConnection, OutreachDraft
+
+MODEL = "claude-sonnet-5"
+
+
+def _template_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
+    name = sc.connection.first_name
+    is_warm = sc.strength_score >= 0.7
+
+    if is_warm:
+        return (
+            f"Hi {name}, hope you've been well! I saw {target_company} has an opening "
+            f"for {target_role} and immediately thought of you since you're on the inside. "
+            f"Would you be open to a quick chat about the team, and possibly pointing me "
+            f"toward a referral if it seems like a fit? No worries at all if not!"
+        )
+    else:
+        return (
+            f"Hi {name}, it's been a while since we connected ({sc.reasoning.split('--')[0].strip()}) "
+            f"-- hope things are going well at {sc.connection.company}. I'm exploring a "
+            f"{target_role} role there and would love to reconnect and hear about your "
+            f"experience on the team, if you have a few minutes."
+        )
+
+
+def _llm_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
+    import json
+    import urllib.request
+
+    api_key = os.environ["ANTHROPIC_API_KEY"]
+    prompt = (
+        f"Draft a short (3-4 sentence), specific, non-generic LinkedIn outreach message "
+        f"asking {sc.connection.first_name} for help with a referral.\n"
+        f"Context: {sc.reasoning}\n"
+        f"They work at {target_company} as a {sc.connection.position}.\n"
+        f"I'm interested in a {target_role} role there.\n"
+        f"Match the tone to the relationship warmth described above -- warm and direct "
+        f"for a strong tie, a re-introduction framing for a dormant one. "
+        f"Return only the message text, nothing else."
+    )
+    body = json.dumps({
+        "model": MODEL,
+        "max_tokens": 300,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    return data["content"][0]["text"].strip()
+
+
+def draft_outreach(
+    matches: List[ScoredConnection], target_company: str, target_role: str
+) -> List[OutreachDraft]:
+    drafts = []
+    use_llm = bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+    for sc in matches:
+        if use_llm:
+            try:
+                message = _llm_draft(sc, target_company, target_role)
+            except Exception as e:
+                message = _template_draft(sc, target_company, target_role)
+                message += f"\n[Note: LLM call failed ({e}), used template fallback]"
+        else:
+            message = _template_draft(sc, target_company, target_role)
+        drafts.append(OutreachDraft(scored_connection=sc, message=message))
+
+    return drafts
+
+
+if __name__ == "__main__":
+    from parser_agent import parse_connections
+    from strength_agent import score_all
+    from company_match_agent import match_company
+
+    conns = parse_connections("../data/mock_connections.csv")
+    scored = score_all(conns)
+    matches = match_company(scored, "Google")
+    drafts = draft_outreach(matches, "Google", "Software Engineer")
+
+    for d in drafts:
+        print(f"\n=== {d.scored_connection.connection.full_name} (score={d.scored_connection.strength_score}) ===")
+        print(d.message)
