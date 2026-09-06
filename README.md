@@ -67,6 +67,16 @@ python3 run_baseline.py --input data/mock_connections.csv \
     --company Google --role "Software Engineer" --top-n 3
 ```
 
+There's also `data/isolated_pair.csv`, a 2-row test case with a single
+isolated variable: both connections share the same company and position,
+differing only in connection date, so ranking has one unambiguous correct
+answer (the more recent connection must rank #1):
+
+```bash
+python3 run_baseline.py --input data/isolated_pair.csv \
+    --company Netflix --role "Software Engineer" --top-n 2
+```
+
 To run against your real export once it arrives:
 ```bash
 python3 run_baseline.py --input data/Connections.csv \
