@@ -21,9 +21,10 @@ only sees the output of the previous one — not the raw input:
 
 - Python 3.10+
 - No third-party packages required for the baseline (standard library only).
-- Optional: an `ANTHROPIC_API_KEY` environment variable to upgrade Agent 4
-  from template-based drafts to real LLM-generated ones. **Not required —
-  the pipeline runs completely free and produces real output without it.**
+- Optional: an `ANTHROPIC_API_KEY` or `LLM_API_KEY` environment variable
+  to upgrade Agent 4 from template-based drafts to real LLM-generated ones.
+  **Not required — the pipeline runs completely free and produces real
+  output without it, and no specific provider is forced on you.**
 
 ## Setup
 
@@ -33,10 +34,20 @@ cd referral-agent
 # no pip install needed for the baseline
 ```
 
-To enable LLM-drafted messages (optional):
+To enable LLM-drafted messages (optional, pick one provider):
 ```bash
+# Claude
 export ANTHROPIC_API_KEY="your-key-here"
+
+# OR literally any other LLM, as long as it exposes an OpenAI-compatible
+# chat-completions endpoint — OpenAI, Groq, Together, Fireworks, DeepSeek,
+# Mistral, a local Ollama/LM Studio server, etc.
+export LLM_API_KEY="your-key-here"
+export LLM_BASE_URL="https://api.openai.com/v1"   # point at your provider
+export LLM_MODEL="gpt-4o-mini"                    # and its model name
 ```
+If both `ANTHROPIC_API_KEY` and `LLM_API_KEY` are set, Claude takes priority.
+Either can also be set in a local `.env` file instead — see [.env.example](.env.example).
 
 ## Getting your own input data
 

@@ -2,4 +2,6 @@ __pycache__/
 *.pyc
 .env
 data/Connections.csv
-PROPOSAL.md
+docs/PROPOSAL.md
+docs/PROPOSAL.tex
+docs/PROPOSAL.pdf

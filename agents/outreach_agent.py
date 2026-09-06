@@ -4,17 +4,29 @@ Agent 4: Outreach-Drafting Agent
 Job: draft a specific, non-generic outreach message per matched
 connection, using their relationship-strength reasoning to set tone.
 
-Zero-subscription design: if ANTHROPIC_API_KEY is set, this calls the
-Claude API for a genuinely tailored draft. If it isn't set (e.g. the TA
-grading this has no key), it falls back to a rule-based template so the
-whole pipeline still runs end-to-end and produces real output.
+Zero-subscription, provider-agnostic design: nothing is required to run
+this. If an LLM key is present it's used for a genuinely tailored draft;
+otherwise a rule-based template is used, so the whole pipeline always
+runs end-to-end and produces real output.
+
+Supported providers (checked in this order, first key found wins):
+  - ANTHROPIC_API_KEY  -> Claude (api.anthropic.com)
+  - LLM_API_KEY        -> literally any other LLM, as long as it exposes an
+                          OpenAI-compatible chat-completions endpoint -- which
+                          covers almost all of them: OpenAI, Groq, Together,
+                          Fireworks, DeepSeek, Mistral, a local Ollama/LM Studio
+                          server, etc. Point LLM_BASE_URL at that provider's
+                          endpoint and LLM_MODEL at its model name.
+  - neither set        -> rule-based template, no network call at all.
 """
 import os
 from typing import List
 
 from common import ScoredConnection, OutreachDraft
 
-MODEL = "claude-sonnet-5"
+ANTHROPIC_MODEL = "claude-sonnet-5"
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 
 
 def _template_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
@@ -37,12 +49,8 @@ def _template_draft(sc: ScoredConnection, target_company: str, target_role: str)
         )
 
 
-def _llm_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
-    import json
-    import urllib.request
-
-    api_key = os.environ["ANTHROPIC_API_KEY"]
-    prompt = (
+def _build_prompt(sc: ScoredConnection, target_company: str, target_role: str) -> str:
+    return (
         f"Draft a short (3-4 sentence), specific, non-generic LinkedIn outreach message "
         f"asking {sc.connection.first_name} for help with a referral.\n"
         f"Context: {sc.reasoning}\n"
@@ -52,10 +60,17 @@ def _llm_draft(sc: ScoredConnection, target_company: str, target_role: str) -> s
         f"for a strong tie, a re-introduction framing for a dormant one. "
         f"Return only the message text, nothing else."
     )
+
+
+def _anthropic_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
+    import json
+    import urllib.request
+
+    api_key = os.environ["ANTHROPIC_API_KEY"]
     body = json.dumps({
-        "model": MODEL,
+        "model": ANTHROPIC_MODEL,
         "max_tokens": 300,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": _build_prompt(sc, target_company, target_role)}],
     }).encode()
 
     req = urllib.request.Request(
@@ -72,16 +87,53 @@ def _llm_draft(sc: ScoredConnection, target_company: str, target_role: str) -> s
     return data["content"][0]["text"].strip()
 
 
+def _generic_llm_draft(sc: ScoredConnection, target_company: str, target_role: str) -> str:
+    """Works with any LLM provider exposing an OpenAI-compatible chat-completions
+    endpoint -- OpenAI itself, Groq, Together, Fireworks, DeepSeek, Mistral, a
+    local Ollama/LM Studio server, etc. Point LLM_BASE_URL at that provider's
+    endpoint and LLM_MODEL at its model name."""
+    import json
+    import urllib.request
+
+    api_key = os.environ["LLM_API_KEY"]
+    body = json.dumps({
+        "model": LLM_MODEL,
+        "max_tokens": 300,
+        "messages": [{"role": "user", "content": _build_prompt(sc, target_company, target_role)}],
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def _pick_llm_draft_fn():
+    """First configured provider wins. Returns None if no key is set anywhere."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return _anthropic_draft
+    if os.environ.get("LLM_API_KEY"):
+        return _generic_llm_draft
+    return None
+
+
 def draft_outreach(
     matches: List[ScoredConnection], target_company: str, target_role: str
 ) -> List[OutreachDraft]:
     drafts = []
-    use_llm = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    llm_draft_fn = _pick_llm_draft_fn()
 
     for sc in matches:
-        if use_llm:
+        if llm_draft_fn:
             try:
-                message = _llm_draft(sc, target_company, target_role)
+                message = llm_draft_fn(sc, target_company, target_role)
             except Exception as e:
                 message = _template_draft(sc, target_company, target_role)
                 message += f"\n[Note: LLM call failed ({e}), used template fallback]"
