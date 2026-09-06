@@ -6,6 +6,7 @@ to people who currently work there. Kept intentionally simple for the
 baseline -- normalized string matching on the Company field. No external
 org-chart data or scraping involved.
 """
+from datetime import datetime
 from typing import List
 
 from common import ScoredConnection
@@ -21,8 +22,16 @@ def match_company(scored_connections: List[ScoredConnection], target_company: st
         sc for sc in scored_connections
         if _normalize(sc.connection.company) == target
     ]
-    # Best referral candidates first: highest relationship strength on top
-    return sorted(matches, key=lambda sc: -sc.strength_score)
+    # Best referral candidates first: highest relationship strength on top, ties
+    # broken by actual connection date so ordering never depends on CSV row order.
+    # toordinal() rather than timestamp() -- the latter raises on datetime.min.
+    return sorted(
+        matches,
+        key=lambda sc: (
+            -sc.strength_score,
+            -(sc.connection.connected_on or datetime.min).toordinal(),
+        ),
+    )
 
 
 if __name__ == "__main__":
