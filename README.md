@@ -12,7 +12,8 @@ only sees the output of the previous one — not the raw input:
 
 1. **Parser Agent** — cleans messy real-world CSV data into structured records.
 2. **Strength Agent** — judges relationship warmth from available signals.
-3. **Company-Match Agent** — filters to relevant candidates at a target company.
+3. **Company-Match Agent** — filters to relevant candidates at a target company,
+   ordered by strength with ties broken by actual connection date (not CSV row order).
 4. **Outreach Agent** — drafts a tailored message, conditioning tone on the
    strength agent's reasoning (a warm tie gets a direct ask; a dormant tie
    gets a re-introduction framing).
@@ -83,6 +84,22 @@ python3 run_baseline.py --input data/Connections.csv \
     --company "<Target Company>" --role "<Target Role>" --top-n 3
 ```
 
+### Optional: paste a job posting instead of --company/--role
+
+If you have a specific posting in mind, `--posting` splits it into company and
+role for you (via the optional `agents/job_posting_parser.py` helper), so you
+don't have to pass them separately:
+
+```bash
+python3 run_baseline.py --input data/mock_connections.csv \
+    --posting "Software Engineer at Google" --top-n 3
+```
+
+Supports formats like `"Software Engineer at Google"`, `"Software Engineer - Google"`,
+`"Software Engineer | Google"`, and `"Google is hiring a Software Engineer"`. If it
+can't confidently parse the text, it errors out and asks you to use `--company`/`--role`
+directly instead.
+
 ## Actual baseline output (captured from a real run)
 
 ```
@@ -102,15 +119,15 @@ $ python3 run_baseline.py --input data/mock_connections.csv --company Google --r
 RESULTS: Best referral candidates at Google for 'Software Engineer'
 ======================================================================
 
-#1  Jennifer Lopez  (UX Designer)
+#1  James Brown  (Recruiter)
+    Relationship strength: 0.4  |  Connected 4.1 years ago -- dormant tie, needs a re-introduction framing.
+    Drafted message:
+    "Hi James, it's been a while since we connected (Connected 4.1 years ago) -- hope things are going well at Google. I'm exploring a Software Engineer role there and would love to reconnect and hear about your experience on the team, if you have a few minutes."
+
+#2  Jennifer Lopez  (UX Designer)
     Relationship strength: 0.4  |  Connected 5.0 years ago -- dormant tie, needs a re-introduction framing.
     Drafted message:
     "Hi Jennifer, it's been a while since we connected (Connected 5.0 years ago) -- hope things are going well at Google. I'm exploring a Software Engineer role there and would love to reconnect and hear about your experience on the team, if you have a few minutes."
-
-#2  James Brown  (Recruiter)
-    Relationship strength: 0.4  |  Connected 4.0 years ago -- dormant tie, needs a re-introduction framing.
-    Drafted message:
-    "Hi James, it's been a while since we connected (Connected 4.0 years ago) -- hope things are going well at Google. I'm exploring a Software Engineer role there and would love to reconnect and hear about your experience on the team, if you have a few minutes."
 
 #3  Sarah Chen  (Senior Software Engineer)
     Relationship strength: 0.2  |  Connected 6.6 years ago -- dormant tie, needs a re-introduction framing.
@@ -140,6 +157,12 @@ message for each. Nothing is written to disk by default.
 - Company matching is exact-string based (normalized case/whitespace only).
   It will miss connections whose `Company` field is stale or informally
   written (e.g. "Google" vs. "Google LLC").
+- A missing `Connected On` date falls back to a neutral 0.4 strength score,
+  which can rank an unknown-recency connection above a connection with a
+  known, genuinely dormant tie.
+- Slash-formatted dates (`MM/DD/YY`) are parsed month-first only; a 4-digit
+  year or a day-first export is not recognized and silently falls back to
+  the unknown-date path above, rather than being rejected.
 - No target-company org-chart modeling — the pipeline only ranks *your own*
   existing connections, it does not identify people at the company you
   aren't already connected to.
@@ -149,13 +172,16 @@ message for each. Nothing is written to disk by default.
 ```
 referral-agent/
 ├── README.md
-├── run_baseline.py          # orchestrator — runs all 4 agents in sequence
+├── .env.example                 # template for optional LLM API keys
+├── run_baseline.py               # orchestrator — runs all 4 agents in sequence
 ├── data/
-│   └── mock_connections.csv # synthetic sample export for testing
+│   ├── mock_connections.csv     # synthetic sample export for testing
+│   └── isolated_pair.csv        # 2-row unambiguous-ranking test case
 └── agents/
-    ├── common.py             # shared data models
-    ├── parser_agent.py        # Agent 1
-    ├── strength_agent.py      # Agent 2
-    ├── company_match_agent.py # Agent 3
-    └── outreach_agent.py      # Agent 4
+    ├── common.py                 # shared data models
+    ├── parser_agent.py           # Agent 1
+    ├── strength_agent.py         # Agent 2
+    ├── company_match_agent.py    # Agent 3
+    ├── outreach_agent.py         # Agent 4
+    └── job_posting_parser.py     # optional helper for --posting
 ```
